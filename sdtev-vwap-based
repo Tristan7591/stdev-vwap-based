@@ -1,0 +1,192 @@
+//@version=6
+indicator("ES/NQ: Yesterday fixed HV + σ(0.5/1/1.5/2/2.5/3) - single set", overlay=true, max_lines_count=120, max_labels_count=120)
+
+// ---------- Inputs (Chicago only)
+resetMode = input.string("Chicago 17:00 (Globex)", "Reset", options=["Chicago 17:00 (Globex)", "Chicago 00:00 (civil)"])
+tzReset   = "America/Chicago"
+resetHour = resetMode == "Chicago 17:00 (Globex)" ? 17 : 0
+resetMin  = 0
+
+len          = input.int(20, "STDEV length (daily returns)", minval=2)
+useLogReturn = input.bool(true, "Use log returns")
+
+showHV     = input.bool(true,  "Show HV")
+show05     = input.bool(true,  "Show ±0.5σ")
+show1      = input.bool(true,  "Show ±1σ")
+show15     = input.bool(true,  "Show ±1.5σ")
+show2      = input.bool(true,  "Show ±2σ")
+show25     = input.bool(true,  "Show ±2.5σ")
+show3      = input.bool(true,  "Show ±3σ")
+showLabels = input.bool(true,  "Show labels")
+
+// ---------- Reset detection (crossing reset timestamp in Chicago)
+msDay  = 24 * 60 * 60 * 1000
+tPrev = time - msDay
+
+y  = year(time, tzReset)
+mo = month(time, tzReset)
+da = dayofmonth(time, tzReset)
+
+yP  = year(tPrev, tzReset)
+moP = month(tPrev, tzReset)
+daP = dayofmonth(tPrev, tzReset)
+
+resetTS_today = timestamp(tzReset, y, mo, da, resetHour, resetMin)
+resetTS_yday  = timestamp(tzReset, yP, moP, daP, resetHour, resetMin)
+
+resetTS = time < resetTS_today ? resetTS_yday : resetTS_today
+newPeriod = (time >= resetTS) and (time[1] < resetTS)
+
+// ---------- Accumulate VWAP over current period (between resets)
+var float cumPV = 0.0
+var float cumV  = 0.0
+
+// ---------- Daily sigma (exchange daily). Freeze at reset.
+dailyRet = useLogReturn ? math.log(close / close[1]) : (close / close[1] - 1.0)
+sigmaDailyLive = request.security(syminfo.tickerid, "D", ta.stdev(dailyRet, len), barmerge.gaps_on, barmerge.lookahead_off)
+
+// ---------- Lines/labels (single set)
+var line lHV  = na
+var line lU05 = na
+var line lD05 = na
+var line lU1  = na
+var line lD1  = na
+var line lU15 = na
+var line lD15 = na
+var line lU2  = na
+var line lD2  = na
+var line lU25 = na
+var line lD25 = na
+var line lU3  = na
+var line lD3  = na
+
+var label labHV  = na
+var label labU05 = na
+var label labD05 = na
+var label labU1  = na
+var label labD1  = na
+var label labU15 = na
+var label labD15 = na
+var label labU2  = na
+var label labD2  = na
+var label labU25 = na
+var label labD25 = na
+var label labU3  = na
+var label labD3  = na
+
+f_delLine(ln) =>
+    if not na(ln)
+        line.delete(ln)
+
+f_delLab(lb) =>
+    if not na(lb)
+        label.delete(lb)
+
+// ---------- On reset: compute yesterday-based levels, delete old set, draw new set
+if newPeriod
+    // HV = VWAP of the period we just finished
+    hvFixed = (cumV > 0.0) ? (cumPV / cumV) : na
+
+    // σ fixed = last confirmed daily sigma (fallback if na)
+    sigmaFixed = na(sigmaDailyLive[1]) ? sigmaDailyLive : sigmaDailyLive[1]
+
+    // reset accumulators for new period
+    cumPV := 0.0
+    cumV  := 0.0
+
+    // Convert sigma -> price move around HV (fixed)
+    move = (not na(hvFixed) and not na(sigmaFixed)) ? (useLogReturn ? hvFixed * (math.exp(sigmaFixed) - 1.0) : hvFixed * sigmaFixed) : na
+
+    up05 = hvFixed + 0.5 * move
+    dn05 = hvFixed - 0.5 * move
+    up1  = hvFixed + 1.0 * move
+    dn1  = hvFixed - 1.0 * move
+    up15 = hvFixed + 1.5 * move
+    dn15 = hvFixed - 1.5 * move
+    up2  = hvFixed + 2.0 * move
+    dn2  = hvFixed - 2.0 * move
+    up25 = hvFixed + 2.5 * move
+    dn25 = hvFixed - 2.5 * move
+    up3  = hvFixed + 3.0 * move
+    dn3  = hvFixed - 3.0 * move
+
+    // delete previous set (NO commas)
+    f_delLine(lHV)
+    f_delLine(lU05)
+    f_delLine(lD05)
+    f_delLine(lU1)
+    f_delLine(lD1)
+    f_delLine(lU15)
+    f_delLine(lD15)
+    f_delLine(lU2)
+    f_delLine(lD2)
+    f_delLine(lU25)
+    f_delLine(lD25)
+    f_delLine(lU3)
+    f_delLine(lD3)
+
+    f_delLab(labHV)
+    f_delLab(labU05)
+    f_delLab(labD05)
+    f_delLab(labU1)
+    f_delLab(labD1)
+    f_delLab(labU15)
+    f_delLab(labD15)
+    f_delLab(labU2)
+    f_delLab(labD2)
+    f_delLab(labU25)
+    f_delLab(labD25)
+    f_delLab(labU3)
+    f_delLab(labD3)
+
+    // draw new set
+    if showHV and not na(hvFixed)
+        lHV := line.new(bar_index, hvFixed, bar_index + 1, hvFixed, extend=extend.right)
+        if showLabels
+            labHV := label.new(bar_index, hvFixed, "HV", style=label.style_label_left)
+
+    if show05 and not na(up05)
+        lU05 := line.new(bar_index, up05, bar_index + 1, up05, extend=extend.right)
+        lD05 := line.new(bar_index, dn05, bar_index + 1, dn05, extend=extend.right)
+        if showLabels
+            labU05 := label.new(bar_index, up05, "+0.5σ", style=label.style_label_left)
+            labD05 := label.new(bar_index, dn05, "-0.5σ", style=label.style_label_left)
+
+    if show1 and not na(up1)
+        lU1 := line.new(bar_index, up1, bar_index + 1, up1, extend=extend.right)
+        lD1 := line.new(bar_index, dn1, bar_index + 1, dn1, extend=extend.right)
+        if showLabels
+            labU1 := label.new(bar_index, up1, "+1σ", style=label.style_label_left)
+            labD1 := label.new(bar_index, dn1, "-1σ", style=label.style_label_left)
+
+    if show15 and not na(up15)
+        lU15 := line.new(bar_index, up15, bar_index + 1, up15, extend=extend.right)
+        lD15 := line.new(bar_index, dn15, bar_index + 1, dn15, extend=extend.right)
+        if showLabels
+            labU15 := label.new(bar_index, up15, "+1.5σ", style=label.style_label_left)
+            labD15 := label.new(bar_index, dn15, "-1.5σ", style=label.style_label_left)
+
+    if show2 and not na(up2)
+        lU2 := line.new(bar_index, up2, bar_index + 1, up2, extend=extend.right)
+        lD2 := line.new(bar_index, dn2, bar_index + 1, dn2, extend=extend.right)
+        if showLabels
+            labU2 := label.new(bar_index, up2, "+2σ", style=label.style_label_left)
+            labD2 := label.new(bar_index, dn2, "-2σ", style=label.style_label_left)
+
+    if show25 and not na(up25)
+        lU25 := line.new(bar_index, up25, bar_index + 1, up25, extend=extend.right)
+        lD25 := line.new(bar_index, dn25, bar_index + 1, dn25, extend=extend.right)
+        if showLabels
+            labU25 := label.new(bar_index, up25, "+2.5σ", style=label.style_label_left)
+            labD25 := label.new(bar_index, dn25, "-2.5σ", style=label.style_label_left)
+
+    if show3 and not na(up3)
+        lU3 := line.new(bar_index, up3, bar_index + 1, up3, extend=extend.right)
+        lD3 := line.new(bar_index, dn3, bar_index + 1, dn3, extend=extend.right)
+        if showLabels
+            labU3 := label.new(bar_index, up3, "+3σ", style=label.style_label_left)
+            labD3 := label.new(bar_index, dn3, "-3σ", style=label.style_label_left)
+
+// accumulate every bar
+cumPV += hlc3 * volume
+cumV  += volume
